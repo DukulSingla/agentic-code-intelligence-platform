@@ -15,4 +15,4 @@ The platform provides:
 
 The system is designed for repositories that exceed model context
 windows and therefore relies on structural navigation rather than
-whole-repository prompting.
+whole-repository prompting. 
