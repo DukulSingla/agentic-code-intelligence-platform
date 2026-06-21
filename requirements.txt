@@ -1,0 +1,41 @@
+# --- Web framework / API layer ---
+fastapi==0.115.0
+uvicorn[standard]==0.32.0
+sse-starlette==2.1.3
+pydantic==2.9.2
+pydantic-settings==2.5.2
+
+# --- Auth / security ---
+passlib==1.7.4
+
+# --- Database ---
+sqlalchemy==2.0.35
+aiosqlite==0.20.0
+alembic==1.13.3
+
+# --- LLM ---
+anthropic==0.39.0
+
+# --- Code retrieval ---
+tree-sitter==0.23.0
+tree-sitter-python==0.23.2
+
+# --- Sandbox ---
+docker==7.1.0
+
+# --- Diff / patch engine ---
+unidiff==0.7.5
+
+# --- Embeddings (optional fallback, only loaded if used) ---
+sentence-transformers==3.1.1
+
+# --- Utilities ---
+tiktoken==0.8.0
+python-dotenv==1.0.1
+structlog==24.4.0
+filelock==3.16.1
+
+# --- Testing ---
+pytest==8.3.3
+pytest-asyncio==0.24.0
+httpx==0.27.2
