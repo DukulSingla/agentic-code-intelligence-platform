@@ -82,6 +82,8 @@ def list_dir(worktree_path: Path, rel_path: str, budget: RetrievalBudget) -> Too
     Flat cost: 5 tokens per entry (directory listings are metadata-only,
     the cheapest retrieval operation).
     """
+
+    root = worktree_path.resolve()
     abs_path = reader.resolve_directory(worktree_path,rel_path,)
 
     entries = []
@@ -89,7 +91,7 @@ def list_dir(worktree_path: Path, rel_path: str, budget: RetrievalBudget) -> Too
         entries.append({
             "name": child.name,
             "type": "dir" if child.is_dir() else "file",
-            "path": str(child.relative_to(worktree_path)),
+            "path": str(child.relative_to(root)),
         })
 
     cost = max(1, len(entries) * 5)
@@ -288,6 +290,7 @@ def references(
     py_files = list_python_files(worktree_path)
     hits: list[dict] = []
     tokens_charged = 0
+    seen: set[tuple[str, int]] = set()
 
     for rel_path in py_files:
         source = reader.read_bytes(
@@ -315,6 +318,7 @@ def references(
             rel_path,
             lines,
             hits,
+            seen
         )
 
     # cost = max(1, total_chars // 4)
@@ -331,7 +335,7 @@ def references(
     )
 
 
-def _find_references(node, symbol_name: str, rel_path: str, lines: list[str], out: list[dict]) -> None:
+def _find_references(node, symbol_name: str, rel_path: str, lines: list[str], out: list[dict], seen: set[tuple[str, int]],) -> None:
     """
     Walk the AST looking for `identifier` nodes whose text matches
     symbol_name. We record a hit for:
@@ -345,19 +349,31 @@ def _find_references(node, symbol_name: str, rel_path: str, lines: list[str], ou
     if node.type == "identifier" and node.text.decode() == symbol_name:
         # Skip if this identifier IS the definition name
         parent = node.parent
-        if parent and parent.type in ("function_definition", "class_definition"):
+        if parent and parent.type in ("function_definition","class_definition","decorated_definition",):
             name_field = parent.child_by_field_name("name")
             if name_field and name_field.id == node.id:
                 for child in node.children:
-                    _find_references(child, symbol_name, rel_path, lines, out)
+                    _find_references(child, symbol_name, rel_path, lines, out, seen)
                 return
 
-        line_no = node.start_point[0]  # 0-based
+        line_no = node.start_point[0]
         line_text = lines[line_no] if line_no < len(lines) else ""
-        out.append({"file_path": rel_path, "line": line_no + 1, "text": line_text.rstrip()})
+
+        key = (rel_path, line_no + 1)
+
+        if key not in seen:
+            seen.add(key)
+
+            out.append(
+                {
+                    "file_path": rel_path,
+                    "line": line_no + 1,
+                    "text": line_text.rstrip(),
+                }
+            )
 
     for child in node.children:
-        _find_references(child, symbol_name, rel_path, lines, out)
+        _find_references(child, symbol_name, rel_path, lines, out, seen)
 
 
 # ---------------------------------------------------------------------------

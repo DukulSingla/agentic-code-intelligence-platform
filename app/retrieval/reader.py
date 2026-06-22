@@ -24,6 +24,7 @@ IGNORE_DIRS = {
     "venv",
     "__pycache__",
     "node_modules",
+    "data"
 }
 
 

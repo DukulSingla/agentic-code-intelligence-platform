@@ -5,6 +5,7 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.exc import IntegrityError
 
 from app.auth import require_user
 from app.models import User, Workspace, get_db
@@ -56,20 +57,44 @@ async def create_workspace(
 
     ws = Workspace(user_id=user.id, name=body.name, repo_path="", default_branch=body.default_branch)
     db.add(ws)
-    await db.flush()  # assign ws.id before we use it as the on-disk dir name
 
     try:
-        repo = init_canonical_repo(ws.id, source, body.default_branch)
+        await db.flush()  # assign ws.id before we use it as the on-disk dir name
+        repo = init_canonical_repo(
+            ws.id,
+            source,
+            body.default_branch,
+        )
+
         ws.repo_path = str(repo.repo_path)
+
         await db.commit()
         await db.refresh(ws)
+
         return ws
+
     except GitError as e:
         await db.rollback()
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=f"failed to clone repository: {e}")
+
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"failed to clone repository: {e}",
+        )
+
+    except IntegrityError:
+        await db.rollback()
+
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"workspace '{body.name}' already exists",
+        )
+
     except Exception:
         await db.rollback()
-        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, detail="failed to create workspace")
+
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="failed to create workspace",)
 
 
 @router.get("", response_model=list[WorkspaceOut])
