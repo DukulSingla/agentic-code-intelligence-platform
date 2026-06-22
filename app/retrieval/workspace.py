@@ -65,7 +65,7 @@ def init_canonical_repo(workspace_id: str, source: str, default_branch: str = "m
     assignment's "synthetic repos only" rule) or a git URL.
     Idempotent: if the repo already exists on disk, reuse it.
     """
-    repo_path = settings.repos_dir / workspace_id
+    repo_path = (settings.repos_dir / workspace_id).resolve()
     if repo_path.exists():
         return WorkspaceRepo(workspace_id, repo_path, default_branch)
 
@@ -75,9 +75,9 @@ def init_canonical_repo(workspace_id: str, source: str, default_branch: str = "m
         # Local source: clone so the canonical repo is independent of the
         # original directory (workspace_isolation also means "isolated from
         # the source the user pointed us at", not just from other users).
-        _run(["git", "clone", "--no-hardlinks", str(source_path), str(repo_path)], cwd=repo_path.parent)
+        _run(["git", "clone", "--no-hardlinks", str(source_path.resolve()), str(repo_path)],cwd=repo_path.parent,)
     else:
-        _run(["git", "clone", source, str(repo_path)], cwd=repo_path.parent)
+        _run(["git", "clone", source, str(repo_path)],cwd=repo_path.parent,)
 
     # Normalize branch name and ensure committer identity exists for this repo
     # (sample/CI environments often lack a global git user.email).

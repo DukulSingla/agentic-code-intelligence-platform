@@ -7,7 +7,7 @@ from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-
+BASE_DIR = Path(__file__).resolve().parent.parent
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_prefix="SCI_", extra="ignore")
 
@@ -19,13 +19,13 @@ class Settings(BaseSettings):
     # --- Database ---
     # SQLite for local dev; swap the URL for postgresql+asyncpg://... in prod.
     # Schema is written to be dialect-agnostic (no SQLite-only types).
-    database_url: str = "sqlite+aiosqlite:////data/sci.db"
+    database_url: str = "sqlite+aiosqlite:///./data/sci.db"
 
     # --- Storage paths (all bind-mounted volumes in docker-compose) ---
-    data_dir: Path = Path("/data")
-    repos_dir: Path = Path("/data/repos")          # bare/main repo clones, one per workspace
-    worktrees_dir: Path = Path("/data/worktrees")   # per-task git worktrees
-    journal_dir: Path = Path("/data/journals")      # per-task JSONL journals
+    data_dir: Path = BASE_DIR / "data"
+    repos_dir: Path = data_dir / "repos"              # bare/main repo clones, one per workspace
+    worktrees_dir: Path = data_dir / "worktrees"      # per-task git worktrees
+    journal_dir: Path = data_dir / "journals"         # per-task JSONL journals
 
     # --- Auth ---
     # API keys are stored hashed (passlib/bcrypt). Plaintext keys are only ever
