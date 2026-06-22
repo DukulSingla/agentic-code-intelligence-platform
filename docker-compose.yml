@@ -4,12 +4,14 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - SCI_DATABASE_URL=sqlite+aiosqlite:////data/sci.db
       - SCI_LOG_LEVEL=INFO
       - SCI_ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
     volumes:
       # Persistent state: db, canonical repo clones, per-task worktrees, journals.
-      - ./data:/data
+      # Mounted at /srv/data to match BASE_DIR-anchored defaults in
+      # app/config.py (WORKDIR is /srv per the Dockerfile) -- no env var
+      # overrides needed, the container's own defaults already point here.
+      - ./data:/srv/data
       # Synthetic sample repo, mounted read-only; registered as a workspace
       # source via POST /v1/workspaces (we clone from it, never write to it).
       - ./eval/sample_repo:/sample_repo:ro

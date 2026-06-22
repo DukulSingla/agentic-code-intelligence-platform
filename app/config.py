@@ -7,7 +7,15 @@ from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# Anchored to the project root (two levels up from this file), not the
+# process's current working directory, so `uvicorn app.main:app` works
+# identically whether it's launched from this directory or anywhere else --
+# and so every path below (including database_url) stays consistent with
+# every other one, rather than some being CWD-relative and others not.
 BASE_DIR = Path(__file__).resolve().parent.parent
+_DEFAULT_DATA_DIR = BASE_DIR / "data"
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_prefix="SCI_", extra="ignore")
 
@@ -17,15 +25,16 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
 
     # --- Database ---
-    # SQLite for local dev; swap the URL for postgresql+asyncpg://... in prod.
-    # Schema is written to be dialect-agnostic (no SQLite-only types).
-    database_url: str = "sqlite+aiosqlite:///./data/sci.db"
+    # SQLite for local dev; schema is written dialect-agnostic so swapping
+    # the URL for postgresql+asyncpg://... later needs no code changes.
+    database_url: str = f"sqlite+aiosqlite:///{_DEFAULT_DATA_DIR / 'sci.db'}"
 
-    # --- Storage paths (all bind-mounted volumes in docker-compose) ---
-    data_dir: Path = BASE_DIR / "data"
-    repos_dir: Path = data_dir / "repos"              # bare/main repo clones, one per workspace
-    worktrees_dir: Path = data_dir / "worktrees"      # per-task git worktrees
-    journal_dir: Path = data_dir / "journals"         # per-task JSONL journals
+    # --- Storage paths (bind-mounted volumes in docker-compose; see the
+    # BASE_DIR comment above for why these all derive from one anchor) ---
+    data_dir: Path = _DEFAULT_DATA_DIR
+    repos_dir: Path = _DEFAULT_DATA_DIR / "repos"          # bare/main repo clones, one per workspace
+    worktrees_dir: Path = _DEFAULT_DATA_DIR / "worktrees"  # per-task git worktrees
+    journal_dir: Path = _DEFAULT_DATA_DIR / "journals"     # per-task JSONL journals
 
     # --- Auth ---
     # API keys are stored hashed (passlib/bcrypt). Plaintext keys are only ever

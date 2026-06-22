@@ -5,7 +5,10 @@ Schema (Postgres-ready, run on SQLite for local dev):
   workspaces       — a repo owned by a user
   tasks            — one agent run against a workspace
   journal_events   — append-only event log per task (crash-resumability)
+  task_checkpoints — coarse-grained resume snapshots per task
   budget_ledger    — append-only metering entries per task
+  symbols          — tree-sitter indexed symbols per workspace (Phase 2)
+  file_index_state — per-file content hash so re-indexing is incremental
 
 Isolation is enforced at the query layer (see app/auth.py and the
 `*_for_user` helpers below): every lookup of a workspace or task is scoped
@@ -149,6 +152,112 @@ class JournalEvent(Base):
     __table_args__ = (
         UniqueConstraint("task_id", "step_index", name="uq_journal_task_step"),
         Index("ix_journal_task_step", "task_id", "step_index"),
+    )
+
+
+class TaskCheckpoint(Base):
+    """
+    Coarse-grained resume points — distinct from journal_events on purpose.
+
+    journal_events is the fine-grained, append-only proof log: one row per
+    model call, tool call, patch, or state transition. Replaying it from
+    step 1 after a crash is *correct*, but on a long-running task it's slow:
+    every already-completed model call would need to be read back row by
+    row before the orchestrator even reaches the point it actually needs to
+    resume from, and the orchestrator would have to reconstruct in-memory
+    agent state (running budget counters, the current plan, the message
+    history sent to the model) by re-deriving it from raw events instead of
+    just having it.
+
+    A checkpoint is a periodic snapshot the orchestrator writes at safe
+    points (e.g. after each completed loop iteration) containing: which
+    journal step_index it's caught up to, the task's TaskState at that
+    point, and a serialized snapshot of whatever in-memory context resume
+    needs. On resume: load the latest checkpoint for the task (if any),
+    replay only journal_events with step_index > checkpoint.step_index, and
+    rehydrate agent state from context_snapshot instead of from scratch.
+    No checkpoint yet -> fall back to full journal replay from step 0,
+    which is always correct, just slower.
+    """
+    __tablename__ = "task_checkpoints"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    task_id: Mapped[str] = mapped_column(String, ForeignKey("tasks.id"), nullable=False, index=True)
+    # The journal step_index this checkpoint is caught up to. Resume replays
+    # only journal_events with step_index > this value.
+    step_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    state: Mapped[TaskState] = mapped_column(Enum(TaskState), nullable=False)
+    # Whatever the orchestrator needs to rehydrate without re-deriving it
+    # from raw journal rows: plan, conversation history, running counters.
+    context_snapshot: Mapped[dict] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+    __table_args__ = (
+        UniqueConstraint("task_id", "step_index", name="uq_checkpoint_task_step"),
+        Index("ix_checkpoint_task_step", "task_id", "step_index"),
+    )
+
+
+class SymbolKind(str, enum.Enum):
+    function = "function"
+    class_ = "class"
+    method = "method"
+
+
+class Symbol(Base):
+    """
+    One row per named symbol extracted by the tree-sitter indexer.
+
+    Scoped to workspace_id (not task_id) because the symbol index is a
+    property of the repo content, not of any individual task run. Two tasks
+    on the same workspace share the same symbol index — each task reads from
+    their own worktree snapshot, but the index is built from the canonical
+    repo and treated as valid until a file's content_hash changes.
+
+    parent_name is set for methods (their containing class name) and None
+    for top-level functions and classes. This lets `definition("MyClass.my_method")`
+    resolve via a (workspace_id, name, parent_name) lookup without a JOIN.
+    """
+    __tablename__ = "symbols"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    workspace_id: Mapped[str] = mapped_column(String, ForeignKey("workspaces.id"), nullable=False)
+    file_path: Mapped[str] = mapped_column(String, nullable=False)   # relative to repo root
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    kind: Mapped[SymbolKind] = mapped_column(Enum(SymbolKind), nullable=False)
+    start_line: Mapped[int] = mapped_column(Integer, nullable=False)  # 1-based, inclusive
+    end_line: Mapped[int] = mapped_column(Integer, nullable=False)    # 1-based, inclusive
+    parent_name: Mapped[str | None] = mapped_column(String, nullable=True)  # class name for methods
+
+    __table_args__ = (
+        # Fast symbol-name lookup (the most common query pattern)
+        Index("ix_symbol_workspace_name", "workspace_id", "name"),
+        # Fast "all symbols in file X" lookup (needed by the indexer on re-index)
+        Index("ix_symbol_workspace_file", "workspace_id", "file_path"),
+    )
+
+
+class FileIndexState(Base):
+    """
+    Tracks what content_hash we last indexed for each file in a workspace.
+    The indexer checks this before parsing: if the file's current SHA256
+    matches the stored hash the file is up-to-date and is skipped, making
+    re-indexing incremental rather than a full re-parse every time.
+
+    On re-index of a changed file: delete all Symbol rows for that
+    (workspace_id, file_path), re-parse, insert fresh Symbol rows, update
+    this row's hash. Unique on (workspace_id, file_path) so UPSERT is safe.
+    """
+    __tablename__ = "file_index_state"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    workspace_id: Mapped[str] = mapped_column(String, ForeignKey("workspaces.id"), nullable=False)
+    file_path: Mapped[str] = mapped_column(String, nullable=False)   # relative to repo root
+    content_hash: Mapped[str] = mapped_column(String, nullable=False)  # SHA256 hex
+    indexed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+    __table_args__ = (
+        UniqueConstraint("workspace_id", "file_path", name="uq_file_index_ws_path"),
     )
 
 

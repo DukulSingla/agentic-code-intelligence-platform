@@ -75,9 +75,12 @@ def init_canonical_repo(workspace_id: str, source: str, default_branch: str = "m
         # Local source: clone so the canonical repo is independent of the
         # original directory (workspace_isolation also means "isolated from
         # the source the user pointed us at", not just from other users).
-        _run(["git", "clone", "--no-hardlinks", str(source_path.resolve()), str(repo_path)],cwd=repo_path.parent,)
+        _run(
+            ["git", "clone", "--no-hardlinks", str(source_path.resolve()), str(repo_path)],
+            cwd=repo_path.parent,
+        )
     else:
-        _run(["git", "clone", source, str(repo_path)],cwd=repo_path.parent,)
+        _run(["git", "clone", source, str(repo_path)], cwd=repo_path.parent)
 
     # Normalize branch name and ensure committer identity exists for this repo
     # (sample/CI environments often lack a global git user.email).

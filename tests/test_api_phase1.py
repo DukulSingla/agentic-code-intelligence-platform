@@ -237,3 +237,51 @@ async def test_cannot_cancel_another_users_task(client, sample_repo):
     # And it must genuinely still be cancellable by its real owner afterward —
     # Bob's attempt must not have mutated the state.
     assert (await ac.post(f"/v1/tasks/{task_id}/cancel", headers=alice_headers)).status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_task_checkpoint_roundtrip_and_unique_constraint(client, sample_repo):
+    """
+    No orchestrator writes checkpoints yet (that lands with the Phase 3
+    loop), but the table itself — schema, JSON snapshot round-trip, and the
+    (task_id, step_index) uniqueness that resume logic depends on — must be
+    correct now, the same way budget_ledger was schema-verified before the
+    budget tracker module existed.
+    """
+    ac, models_mod, auth_mod = client
+    _, alice_key = await _create_user(models_mod, auth_mod, "alice")
+    headers = {"Authorization": f"Bearer {alice_key}"}
+
+    ws_resp = await ac.post("/v1/workspaces", json={"name": "demo", "source": str(sample_repo)}, headers=headers)
+    ws_id = ws_resp.json()["id"]
+    task_resp = await ac.post(
+        "/v1/tasks", json={"workspace_id": ws_id, "instruction": "do a thing"}, headers=headers,
+    )
+    task_id = task_resp.json()["task_id"]
+
+    from sqlalchemy import select
+
+    async with models_mod.AsyncSessionLocal() as db:
+        db.add(models_mod.TaskCheckpoint(
+            task_id=task_id, step_index=3, state=models_mod.TaskState.EDITING,
+            context_snapshot={"plan": ["a", "b"], "tokens_used": 900},
+        ))
+        await db.commit()
+
+        result = await db.execute(
+            select(models_mod.TaskCheckpoint).where(models_mod.TaskCheckpoint.task_id == task_id)
+        )
+        rows = result.scalars().all()
+        assert len(rows) == 1
+        assert rows[0].step_index == 3
+        assert rows[0].state == models_mod.TaskState.EDITING
+        assert rows[0].context_snapshot == {"plan": ["a", "b"], "tokens_used": 900}
+
+        # A second checkpoint at the same step_index for the same task must
+        # be rejected — resume logic assumes at most one checkpoint per step.
+        with pytest.raises(Exception):
+            db.add(models_mod.TaskCheckpoint(
+                task_id=task_id, step_index=3, state=models_mod.TaskState.VERIFYING,
+                context_snapshot={},
+            ))
+            await db.commit()
